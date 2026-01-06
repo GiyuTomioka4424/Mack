@@ -6,48 +6,44 @@ const login = require("ws3-fca");
 
 const app = express();
 
-const COMMAND_PATH = path.join(__dirname, "script", "commands");
-const EVENT_PATH = path.join(__dirname, "script", "events");
-const CONFIG_PATH = path.join(__dirname, "config", "config.json");
+// paths
+const ROOT = __dirname;
+const COMMAND_PATH = path.join(ROOT, "script", "commands");
+const DATA_PATH = path.join(ROOT, "data");
 
+// utils
 const Utils = {
   commands: new Map(),
-  events: new Map(),
-  startTime: Date.now()
+  handleEvent: new Map()
 };
 
-/* ===================== LOAD CONFIG ===================== */
-const config = fs.existsSync(CONFIG_PATH)
-  ? JSON.parse(fs.readFileSync(CONFIG_PATH))
-  : { prefix: false, admins: [] };
-
-/* ===================== HELPERS ===================== */
-function walk(dir) {
-  let results = [];
-  if (!fs.existsSync(dir)) return results;
-
-  for (const file of fs.readdirSync(dir)) {
-    const full = path.join(dir, file);
-    if (fs.statSync(full).isDirectory()) {
-      results = results.concat(walk(full));
-    } else if (file.endsWith(".js")) {
-      results.push(full);
-    }
-  }
-  return results;
+/* ===================== ENSURE DATA FOLDER ===================== */
+if (!fs.existsSync(DATA_PATH)) {
+  fs.mkdirSync(DATA_PATH, { recursive: true });
 }
 
-/* ===================== LOAD COMMANDS ===================== */
+/* ===================== SAFE LOAD COMMANDS ===================== */
 function loadCommands() {
   Utils.commands.clear();
 
-  const files = walk(COMMAND_PATH);
-  for (const file of files) {
-    try {
-      delete require.cache[require.resolve(file)];
-      const cmd = require(file);
+  if (!fs.existsSync(COMMAND_PATH)) {
+    console.log("[CMD] commands folder not found");
+    return;
+  }
 
-      if (!cmd?.config?.name || typeof cmd.run !== "function") continue;
+  const files = fs.readdirSync(COMMAND_PATH).filter(f => f.endsWith(".js"));
+
+  for (const file of files) {
+    const filePath = path.join(COMMAND_PATH, file);
+
+    try {
+      delete require.cache[require.resolve(filePath)];
+      const cmd = require(filePath);
+
+      if (!cmd?.config?.name || typeof cmd.run !== "function") {
+        console.log(`[CMD] Skipped: ${file} (invalid format)`);
+        continue;
+      }
 
       const name = cmd.config.name.toLowerCase();
       Utils.commands.set(name, cmd);
@@ -59,58 +55,38 @@ function loadCommands() {
       }
 
       console.log(`[CMD] Loaded: ${name}`);
-    } catch (e) {
-      console.log(`[CMD] Failed: ${path.basename(file)} → ${e.message}`);
-    }
-  }
-}
-
-/* ===================== LOAD EVENTS ===================== */
-function loadEvents() {
-  Utils.events.clear();
-
-  const files = walk(EVENT_PATH);
-  for (const file of files) {
-    try {
-      delete require.cache[require.resolve(file)];
-      const ev = require(file);
-
-      if (!ev?.name || typeof ev.run !== "function") continue;
-
-      Utils.events.set(ev.name, ev);
-      console.log(`[EVENT] Loaded: ${ev.name}`);
-    } catch (e) {
-      console.log(`[EVENT] Failed: ${path.basename(file)} → ${e.message}`);
+    } catch (err) {
+      console.log(`[CMD] Failed: ${file} → ${err.message}`);
     }
   }
 }
 
 loadCommands();
-loadEvents();
 
 /* ===================== EXPRESS ===================== */
 app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(path.join(ROOT, "public")));
 
-/* ===================== PANEL APIs ===================== */
+/* ===================== COMMAND LIST API ===================== */
 app.get("/commands", (req, res) => {
-  const unique = [...new Set([...Utils.commands.values()].map(c => c.config.name))];
-  res.json({ commands: unique });
-});
+  const unique = new Set();
+  const commands = [];
 
-app.get("/events", (req, res) => {
-  res.json({ events: [...Utils.events.keys()] });
-});
+  for (const cmd of Utils.commands.values()) {
+    if (!unique.has(cmd.config.name)) {
+      unique.add(cmd.config.name);
+      commands.push(cmd.config.name);
+    }
+  }
 
-app.get("/online_user", (req, res) => {
   res.json({
-    online: true,
-    uptime: Math.floor((Date.now() - Utils.startTime) / 1000)
+    commands,
+    events: []
   });
 });
 
 /* ===================== LOGIN ===================== */
-app.post("/login", async (req, res) => {
+app.post("/login", (req, res) => {
   const { state, prefix } = req.body;
 
   if (!state) {
@@ -125,31 +101,29 @@ app.post("/login", async (req, res) => {
     api.setOptions({ listenEvents: true });
 
     api.listenMqtt((error, event) => {
-      if (error || !event) return;
+      if (error || !event.body) return;
 
-      /* ===== EVENTS ===== */
-      if (Utils.events.has(event.type)) {
-        try {
-          Utils.events.get(event.type).run({ api, event });
-        } catch {}
+      let body = event.body.trim();
+      let args = [];
+      let commandName = "";
+
+      // ✅ NO PREFIX MODE
+      if (!prefix || prefix === false) {
+        args = body.split(/\s+/);
+        commandName = args.shift().toLowerCase();
+      } else {
+        if (!body.startsWith(prefix)) return;
+        args = body.slice(prefix.length).trim().split(/\s+/);
+        commandName = args.shift().toLowerCase();
       }
 
-      if (!event.body) return;
-
-      const botPrefix = prefix ?? config.prefix;
-      if (botPrefix && !event.body.startsWith(botPrefix)) return;
-
-      const args = botPrefix
-        ? event.body.slice(botPrefix.length).trim().split(/\s+/)
-        : event.body.trim().split(/\s+/);
-
-      const cmdName = args.shift().toLowerCase();
-      const cmd = Utils.commands.get(cmdName);
-      if (!cmd) return;
+      const command = Utils.commands.get(commandName);
+      if (!command) return;
 
       try {
-        cmd.run({ api, event, args });
-      } catch {
+        command.run({ api, event, args });
+      } catch (e) {
+        console.error(e);
         api.sendMessage("⚠️ Command error.", event.threadID);
       }
     });
@@ -158,7 +132,7 @@ app.post("/login", async (req, res) => {
   });
 });
 
-/* ===================== START ===================== */
+/* ===================== START SERVER ===================== */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🌐 Server running on port ${PORT}`);
