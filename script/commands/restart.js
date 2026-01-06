@@ -1,31 +1,18 @@
-module.exports = {
-  config: {
-    name: "restart",
-    aliases: ["reboot"],
-    role: 1,
-    cooldown: 5,
-    hasPrefix: false
-  },
+const RESTART_PATH = path.join(__dirname, "data", "restart.json");
 
-  run({ api, event }) {
-    const ADMIN_UID = "61562953390569";
-
-    if (event.senderID !== ADMIN_UID) {
-      return api.sendMessage(
-        "❌ You are not allowed to restart the bot.",
-        event.threadID
-      );
-    }
+if (fs.existsSync(RESTART_PATH)) {
+  try {
+    const restartInfo = JSON.parse(fs.readFileSync(RESTART_PATH));
 
     api.sendMessage(
-      "🔄 Restarting bot...\n\n⏳ Please wait a few seconds.",
-      event.threadID,
-      () => {
-        // give Messenger time to deliver message
-        setTimeout(() => {
-          process.exit(0); // Render/Replit auto-restart
-        }, 2000);
-      }
+      "✅ Bot successfully restarted!\n\n" +
+      `🕒 Time: ${new Date().toLocaleString()}\n` +
+      "🟢 Status: ONLINE",
+      ADMIN_UID
     );
+
+    fs.unlinkSync(RESTART_PATH); // remove flag
+  } catch (e) {
+    console.log("Failed to notify admin after restart");
   }
-};
+}
