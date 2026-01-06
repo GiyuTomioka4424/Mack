@@ -56,8 +56,9 @@ module.exports = {
       );
     }
 
-    inventory[senderID] ??= {};
-    balance[senderID] ??= 0;
+    /* ✅ SAFE INIT */
+    inventory[senderID] = inventory[senderID] || {};
+    balance[senderID] = Number(balance[senderID]) || 0;
 
     /* ================= VIEW SHOP ================= */
     if (!args[0]) {
@@ -76,10 +77,10 @@ module.exports = {
 
       msg +=
         "━━━━━━━━━━━━━━━━━━\n" +
-        "Buy using:\n" +
+        "📦 Buy using:\n" +
         "shop buy <item> <amount>\n\n" +
         "Example:\n" +
-        "shop buy lucky_charm 1";
+        "shop buy pickaxe 1";
 
       return api.sendMessage(msg, threadID);
     }
@@ -89,9 +90,16 @@ module.exports = {
       const itemId = args[1]?.toLowerCase();
       const amount = parseInt(args[2]) || 1;
 
-      if (!SHOP_ITEMS[itemId] || amount < 1) {
+      if (!itemId || !SHOP_ITEMS[itemId]) {
         return api.sendMessage(
-          "❌ Invalid item or amount.\nUse: shop",
+          "❌ Item not found.\nUse: shop",
+          threadID
+        );
+      }
+
+      if (amount < 1) {
+        return api.sendMessage(
+          "❌ Invalid amount.\nAmount must be 1 or more.",
           threadID
         );
       }
@@ -100,13 +108,17 @@ module.exports = {
 
       if (balance[senderID] < totalCost) {
         return api.sendMessage(
-          "❌ Not enough balance.\n" +
-          `Required: ₱${totalCost.toLocaleString()}`,
+          "❌ Not enough balance.\n\n" +
+          `💰 Your balance: ₱${balance[senderID].toLocaleString()}\n` +
+          `📦 Required: ₱${totalCost.toLocaleString()}`,
           threadID
         );
       }
 
+      /* 💸 DEDUCT */
       balance[senderID] -= totalCost;
+
+      /* 🎒 ADD ITEM */
       inventory[senderID][itemId] =
         (inventory[senderID][itemId] || 0) + amount;
 
@@ -115,9 +127,9 @@ module.exports = {
 
       return api.sendMessage(
         "✅ PURCHASE SUCCESSFUL\n\n" +
-        `Item: ${SHOP_ITEMS[itemId].name}\n` +
-        `Amount: ${amount}\n` +
-        `Total Cost: ₱${totalCost.toLocaleString()}\n\n` +
+        `📦 Item: ${SHOP_ITEMS[itemId].name}\n` +
+        `🔢 Amount: ${amount}\n` +
+        `💰 Cost: ₱${totalCost.toLocaleString()}\n\n` +
         "🎒 Item added to your inventory.",
         threadID
       );
@@ -125,7 +137,7 @@ module.exports = {
 
     /* ================= FALLBACK ================= */
     api.sendMessage(
-      "❌ Invalid shop command.\nUse:\nshop\nshop buy <item> <amount>",
+      "❌ Invalid shop command.\n\nUse:\nshop\nshop buy <item> <amount>",
       threadID
     );
   }
