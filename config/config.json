@@ -1,0 +1,21 @@
+{
+  "botName": "Macky System",
+  "prefix": false,
+
+  "admins": [
+    "61562953390569"
+  ],
+
+  "devMode": false,
+  "restartTime": 30,
+
+  "economy": {
+    "startingMoney": 1000,
+    "dailyMin": 500,
+    "dailyMax": 1500
+  },
+
+  "mining": {
+    "pickaxeDurability": 200
+  }
+}

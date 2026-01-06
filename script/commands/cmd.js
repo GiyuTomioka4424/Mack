@@ -1,0 +1,137 @@
+const fs = require("fs");
+const path = require("path");
+
+const ADMIN_UID = "61562953390569";
+const COMMAND_DIR = __dirname; // script/commands
+
+module.exports = {
+  config: {
+    name: "cmd",
+    aliases: ["command"],
+    role: 0,
+    cooldown: 5,
+    hasPrefix: false
+  },
+
+  async run({ api, event, args }) {
+    const { senderID, threadID, body } = event;
+
+    // 🔒 ADMIN CHECK
+    if (senderID !== ADMIN_UID) {
+      return api.sendMessage(
+        "⛔ ACCESS DENIED\n\nOnly the bot admin can manage commands.",
+        threadID
+      );
+    }
+
+    /* ================= HELP ================= */
+    if (!args[0]) {
+      return api.sendMessage(
+        "📦 CMD MANAGER\n\n" +
+        "Commands:\n" +
+        "cmd install <file>.js <code>\n" +
+        "cmd uninstall <file>.js\n\n" +
+        "Examples:\n" +
+        "cmd install ping.js <code>\n" +
+        "cmd uninstall ping.js",
+        threadID
+      );
+    }
+
+    /* ================= INSTALL ================= */
+    if (args[0] === "install") {
+      const fileName = args[1];
+
+      if (!fileName || !fileName.endsWith(".js")) {
+        return api.sendMessage(
+          "❌ Invalid filename.\nExample: cmd install test.js",
+          threadID
+        );
+      }
+
+      const filePath = path.join(COMMAND_DIR, fileName);
+
+      if (fs.existsSync(filePath)) {
+        return api.sendMessage(
+          "⚠️ Command already exists.\nUninstall it first.",
+          threadID
+        );
+      }
+
+      // extract code after filename
+      const index = body.indexOf(fileName) + fileName.length;
+      const code = body.slice(index).trim();
+
+      if (!code) {
+        return api.sendMessage(
+          "❌ No code detected.\nPaste the command code after filename.",
+          threadID
+        );
+      }
+
+      if (!code.includes("module.exports")) {
+        return api.sendMessage(
+          "❌ Invalid command format.\nMissing module.exports.",
+          threadID
+        );
+      }
+
+      try {
+        fs.writeFileSync(filePath, code);
+        return api.sendMessage(
+          "✅ COMMAND INSTALLED\n\n" +
+          `📁 File: ${fileName}\n\n` +
+          "🔁 Restart the bot to load the new command.",
+          threadID
+        );
+      } catch (err) {
+        return api.sendMessage(
+          "❌ Failed to install command.\n" + err.message,
+          threadID
+        );
+      }
+    }
+
+    /* ================= UNINSTALL ================= */
+    if (args[0] === "uninstall") {
+      const fileName = args[1];
+
+      if (!fileName || !fileName.endsWith(".js")) {
+        return api.sendMessage(
+          "❌ Invalid filename.\nExample: cmd uninstall test.js",
+          threadID
+        );
+      }
+
+      const filePath = path.join(COMMAND_DIR, fileName);
+
+      if (!fs.existsSync(filePath)) {
+        return api.sendMessage(
+          "❌ Command not found.",
+          threadID
+        );
+      }
+
+      try {
+        fs.unlinkSync(filePath);
+        return api.sendMessage(
+          "🗑️ COMMAND UNINSTALLED\n\n" +
+          `📁 Removed: ${fileName}\n\n` +
+          "🔁 Restart the bot to apply changes.",
+          threadID
+        );
+      } catch (err) {
+        return api.sendMessage(
+          "❌ Failed to uninstall command.\n" + err.message,
+          threadID
+        );
+      }
+    }
+
+    /* ================= UNKNOWN ================= */
+    api.sendMessage(
+      "❓ Unknown cmd action.\nUse: cmd",
+      threadID
+    );
+  }
+};
