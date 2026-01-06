@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const ADMIN_UID = "61562953390569";
-const COMMAND_DIR = __dirname; // script/commands
+const COMMAND_DIR = path.join(__dirname, "../commands"); // ✅ FIXED PATH
 
 module.exports = {
   config: {
@@ -13,10 +13,10 @@ module.exports = {
     hasPrefix: false
   },
 
-  async run({ api, event, args }) {
-    const { senderID, threadID, body } = event;
+  run({ api, event, args }) {
+    const { senderID, threadID } = event;
 
-    // 🔒 ADMIN CHECK
+    /* 🔒 ADMIN CHECK */
     if (senderID !== ADMIN_UID) {
       return api.sendMessage(
         "⛔ ACCESS DENIED\n\nOnly the bot admin can manage commands.",
@@ -31,9 +31,9 @@ module.exports = {
         "Commands:\n" +
         "cmd install <file>.js <code>\n" +
         "cmd uninstall <file>.js\n\n" +
-        "Examples:\n" +
-        "cmd install ping.js <code>\n" +
-        "cmd uninstall ping.js",
+        "⚠️ Note:\n" +
+        "• Restart bot after install/uninstall\n" +
+        "• File name must end with .js",
         threadID
       );
     }
@@ -42,9 +42,15 @@ module.exports = {
     if (args[0] === "install") {
       const fileName = args[1];
 
-      if (!fileName || !fileName.endsWith(".js")) {
+      /* 🛑 VALIDATION */
+      if (
+        !fileName ||
+        !fileName.endsWith(".js") ||
+        fileName.includes("/") ||
+        fileName.includes("\\")
+      ) {
         return api.sendMessage(
-          "❌ Invalid filename.\nExample: cmd install test.js",
+          "❌ Invalid filename.\nExample:\ncmd install test.js",
           threadID
         );
       }
@@ -58,13 +64,12 @@ module.exports = {
         );
       }
 
-      // extract code after filename
-      const index = body.indexOf(fileName) + fileName.length;
-      const code = body.slice(index).trim();
+      /* 📦 EXTRACT CODE */
+      const code = args.slice(2).join(" ");
 
       if (!code) {
         return api.sendMessage(
-          "❌ No code detected.\nPaste the command code after filename.",
+          "❌ No code detected.\nPaste command code after filename.",
           threadID
         );
       }
@@ -77,7 +82,8 @@ module.exports = {
       }
 
       try {
-        fs.writeFileSync(filePath, code);
+        fs.writeFileSync(filePath, code, "utf8");
+
         return api.sendMessage(
           "✅ COMMAND INSTALLED\n\n" +
           `📁 File: ${fileName}\n\n` +
@@ -96,9 +102,14 @@ module.exports = {
     if (args[0] === "uninstall") {
       const fileName = args[1];
 
-      if (!fileName || !fileName.endsWith(".js")) {
+      if (
+        !fileName ||
+        !fileName.endsWith(".js") ||
+        fileName.includes("/") ||
+        fileName.includes("\\")
+      ) {
         return api.sendMessage(
-          "❌ Invalid filename.\nExample: cmd uninstall test.js",
+          "❌ Invalid filename.\nExample:\ncmd uninstall test.js",
           threadID
         );
       }
@@ -106,14 +117,12 @@ module.exports = {
       const filePath = path.join(COMMAND_DIR, fileName);
 
       if (!fs.existsSync(filePath)) {
-        return api.sendMessage(
-          "❌ Command not found.",
-          threadID
-        );
+        return api.sendMessage("❌ Command not found.", threadID);
       }
 
       try {
         fs.unlinkSync(filePath);
+
         return api.sendMessage(
           "🗑️ COMMAND UNINSTALLED\n\n" +
           `📁 Removed: ${fileName}\n\n` +
@@ -129,9 +138,6 @@ module.exports = {
     }
 
     /* ================= UNKNOWN ================= */
-    api.sendMessage(
-      "❓ Unknown cmd action.\nUse: cmd",
-      threadID
-    );
+    api.sendMessage("❓ Unknown cmd action.\nUse: cmd", threadID);
   }
 };
