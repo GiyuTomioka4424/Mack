@@ -1,64 +1,46 @@
-const os = require("os");
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+const { sleep } = require("../../utils/animate");
 
 module.exports = {
   config: {
     name: "uptime",
     aliases: ["up"],
-    role: 0,
-    cooldown: 3,
+    cooldown: 5,
     hasPrefix: false
   },
 
   async run({ api, event }) {
     const { threadID } = event;
 
-    const start = await api.sendMessage(
-      "⏱️ Checking uptime...\n\n⬜⬜⬜⬜⬜",
-      threadID
-    );
+    const start = process.uptime();
+    const days = Math.floor(start / 86400);
+    const hours = Math.floor((start % 86400) / 3600);
+    const minutes = Math.floor((start % 3600) / 60);
+    const seconds = Math.floor(start % 60);
 
-    const frames = [
-      "🟩⬜⬜⬜⬜",
-      "🟩🟩⬜⬜⬜",
-      "🟩🟩🟩⬜⬜",
-      "🟩🟩🟩🟩⬜",
-      "🟩🟩🟩🟩🟩"
-    ];
+    // STEP 1: Send initial message
+    const msgID = await api.sendMessage("⏳ Checking uptime.", threadID);
 
-    for (const bar of frames) {
-      await sleep(500);
-      api.editMessage(
-        `⏱️ Checking uptime...\n\n${bar}`,
-        start.messageID
-      );
-    }
+    // STEP 2: Animate safely (FINITE)
+    await sleep(600);
+    api.editMessage("⏳ Checking uptime..", msgID);
 
-    const totalSeconds = process.uptime();
-    const days = Math.floor(totalSeconds / 86400);
-    const hours = Math.floor((totalSeconds % 86400) / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = Math.floor(totalSeconds % 60);
+    await sleep(600);
+    api.editMessage("⏳ Checking uptime...", msgID);
 
-    const memory = (process.memoryUsage().rss / 1024 / 1024).toFixed(2);
-    const cpu = os.loadavg()[0].toFixed(2);
+    await sleep(600);
 
-    const msg =
+    // STEP 3: Final result (STOP HERE)
+    api.editMessage(
       "╔════════════════════╗\n" +
       "⏱️ BOT UPTIME\n" +
       "╚════════════════════╝\n\n" +
-      `🗓️ Days   : ${days}\n` +
-      `🕒 Hours  : ${hours}\n` +
-      `🕑 Minutes: ${minutes}\n` +
-      `🕐 Seconds: ${seconds}\n\n` +
-      `💾 RAM Usage: ${memory} MB\n` +
-      `🖥️ CPU Load : ${cpu}\n\n` +
+      `🗓️ ${days} day(s)\n` +
+      `⏰ ${hours} hour(s)\n` +
+      `⏳ ${minutes} minute(s)\n` +
+      `⌛ ${seconds} second(s)\n\n` +
       "━━━━━━━━━━━━━━━━━━\n" +
-      "— Macky Bot V3";
-
-    api.editMessage(msg, start.messageID);
+      "— Macky Bot V3",
+      msgID
+    );
   }
 };
