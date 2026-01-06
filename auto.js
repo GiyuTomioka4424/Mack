@@ -5,14 +5,19 @@ const bodyParser = require("body-parser");
 const login = require("ws3-fca");
 
 const app = express();
-
 const COMMAND_PATH = path.join(__dirname, "script", "commands");
-const EVENT_PATH = path.join(__dirname, "script", "events");
+const CONFIG_PATH = path.join(__dirname, "config", "config.json");
+
+const config = fs.existsSync(CONFIG_PATH)
+  ? JSON.parse(fs.readFileSync(CONFIG_PATH))
+  : { prefix: false };
 
 const Utils = {
-  commands: new Map(),
-  handleEvent: new Map()
+  commands: new Map()
 };
+
+/* ===================== BOT UPTIME ===================== */
+const onlineSince = Date.now();
 
 /* ===================== LOAD COMMANDS ===================== */
 function loadCommands() {
@@ -42,71 +47,52 @@ function loadCommands() {
 
       console.log(`[CMD] Loaded: ${name}`);
     } catch (err) {
-      console.log(`[CMD] Failed: ${file} ${err.message}`);
+      console.log(`[CMD] Failed: ${file} → ${err.message}`);
     }
   }
 }
 
 loadCommands();
 
-/* ===================== LOAD EVENTS (WEBSITE ONLY) ===================== */
-function loadEvents() {
-  if (!fs.existsSync(EVENT_PATH)) {
-    console.log("[EVENT] events folder not found");
-    return;
-  }
-
-  const files = fs.readdirSync(EVENT_PATH).filter(f => f.endsWith(".js"));
-
-  for (const file of files) {
-    const filePath = path.join(EVENT_PATH, file);
-    try {
-      delete require.cache[require.resolve(filePath)];
-      const event = require(filePath);
-
-      if (!event || !event.name || typeof event.handleEvent !== "function") {
-        console.log(`[EVENT] Skipped: ${file} (invalid format)`);
-        continue;
-      }
-
-      Utils.handleEvent.set(event.name, event);
-      console.log(`[EVENT] Loaded: ${event.name}`);
-    } catch (err) {
-      console.log(`[EVENT] Failed: ${file} ${err.message}`);
-    }
-  }
-}
-
-loadEvents();
-
 /* ===================== EXPRESS ===================== */
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-/* ===================== COMMAND LIST API ===================== */
+/* ===================== ROUTES ===================== */
+
+// Home (for uptime pinger)
+app.get("/", (req, res) => {
+  res.send("🤖 Macky System is running");
+});
+
+// Active / online page FIX
+app.get("/online_user", (req, res) => {
+  res.json({
+    status: "online",
+    bot: config.botName || "Macky System",
+    uptime: Math.floor((Date.now() - onlineSince) / 1000) + " seconds",
+    time: new Date().toLocaleString()
+  });
+});
+
+// Command list API
 app.get("/commands", (req, res) => {
-  const commandSet = new Set();
+  const unique = new Set();
   const commands = [];
 
   for (const cmd of Utils.commands.values()) {
-    if (!commandSet.has(cmd.config.name)) {
-      commandSet.add(cmd.config.name);
+    if (!unique.has(cmd.config.name)) {
+      unique.add(cmd.config.name);
       commands.push(cmd.config.name);
     }
   }
 
-  const events = [...Utils.handleEvent.keys()];
-
-  res.json({
-    commands,
-    handleEvent: events,
-    aliases: []
-  });
+  res.json({ commands });
 });
 
 /* ===================== LOGIN ===================== */
 app.post("/login", async (req, res) => {
-  const { state, prefix } = req.body;
+  const { state } = req.body;
 
   if (!state) {
     return res.json({ success: false, message: "Missing appstate" });
@@ -120,21 +106,28 @@ app.post("/login", async (req, res) => {
     api.setOptions({ listenEvents: true });
 
     api.listenMqtt((error, event) => {
-      if (error) return;
+      if (error || !event.body) return;
 
-      /* COMMANDS */
-      if (event.body && event.body.startsWith(prefix)) {
-        const args = event.body.slice(prefix.length).trim().split(/\s+/);
-        const commandName = args.shift().toLowerCase();
-        const command = Utils.commands.get(commandName);
+      const body = event.body.trim();
 
-        if (command) {
-          try {
-            command.run({ api, event, args });
-          } catch {
-            api.sendMessage("⚠️ Command error.", event.threadID);
-          }
-        }
+      // PREFIX HANDLING
+      if (config.prefix !== false) {
+        if (!body.startsWith(config.prefix)) return;
+      }
+
+      const args = config.prefix !== false
+        ? body.slice(config.prefix.length).trim().split(/\s+/)
+        : body.split(/\s+/);
+
+      const commandName = args.shift().toLowerCase();
+      const command = Utils.commands.get(commandName);
+      if (!command) return;
+
+      try {
+        command.run({ api, event, args });
+      } catch (e) {
+        api.sendMessage("⚠️ Command error.", event.threadID);
+        console.error(e);
       }
     });
 
@@ -143,7 +136,7 @@ app.post("/login", async (req, res) => {
 });
 
 /* ===================== START SERVER ===================== */
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🌐 Server running on http://localhost:${PORT}`);
+  console.log(`🌐 Server running on port ${PORT}`);
 });
