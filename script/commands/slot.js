@@ -1,16 +1,17 @@
 const fs = require("fs");
 const path = require("path");
 
-const USERS_PATH = path.join(__dirname, "../../data/users.json");
-const INV_PATH = path.join(__dirname, "../../data/inventory.json");
-const BAL_PATH = path.join(__dirname, "../../data/balance.json");
-const BANK_PATH = path.join(__dirname, "../../data/bank.json");
+const USERS = path.join(__dirname, "../../data/users.json");
+const BAL = path.join(__dirname, "../../data/balance.json");
+const INV = path.join(__dirname, "../../data/inventory.json");
+const LOAN = path.join(__dirname, "../../data/loan.json");
+const SLOT = path.join(__dirname, "../../data/slot.json");
 
-[USERS_PATH, INV_PATH, BAL_PATH, BANK_PATH].forEach(p => {
+[USERS, BAL, INV, LOAN, SLOT].forEach(p => {
   if (!fs.existsSync(p)) fs.writeFileSync(p, "{}");
 });
 
-const delay = ms => new Promise(r => setTimeout(r, ms));
+const SYMBOLS = ["🍒", "🍋", "🍉", "⭐", "💎"];
 
 module.exports = {
   config: {
@@ -19,96 +20,85 @@ module.exports = {
     hasPrefix: false
   },
 
-  async run({ api, event, args }) {
+  run({ api, event, args }) {
     const { senderID, threadID } = event;
 
-    const users = JSON.parse(fs.readFileSync(USERS_PATH));
-    const inv = JSON.parse(fs.readFileSync(INV_PATH));
-    const bal = JSON.parse(fs.readFileSync(BAL_PATH));
-    const bank = JSON.parse(fs.readFileSync(BANK_PATH));
+    const users = JSON.parse(fs.readFileSync(USERS));
+    const bal = JSON.parse(fs.readFileSync(BAL));
+    const inv = JSON.parse(fs.readFileSync(INV));
+    const loan = JSON.parse(fs.readFileSync(LOAN));
+    const slotData = JSON.parse(fs.readFileSync(SLOT));
 
-    /* ================= REGISTER CHECK ================= */
-    if (!users[senderID]) {
-      return api.sendMessage(
-        "📝 You must register first.\nUse: register",
-        threadID
-      );
-    }
+    if (!users[senderID])
+      return api.sendMessage("📝 You must register first.", threadID);
 
-    inv[senderID] ??= {};
+    if ((loan[senderID] || 0) > 0)
+      return api.sendMessage("❌ You cannot use slot while you have a loan.", threadID);
+
+    const bet = parseInt(args[0]) || 100;
+    if (bet <= 0) return api.sendMessage("❌ Invalid bet.", threadID);
+
     bal[senderID] ??= 0;
-    bank[senderID] ??= { loan: 0 };
+    inv[senderID] ??= {};
+    slotData[senderID] ??= { loseStreak: 0 };
 
-    /* ================= LOAN BLOCK ================= */
-    if (bank[senderID].loan > 0) {
-      return api.sendMessage(
-        "🚫 SLOT BLOCKED\n\n" +
-        "You currently have an unpaid loan.\n" +
-        "💳 Pay your loan first before playing slot.",
-        threadID
-      );
-    }
-
-    /* ================= BET CHECK ================= */
-    const bet = parseInt(args[0]);
-    if (!bet || bet <= 0) {
-      return api.sendMessage(
-        "🎰 SLOT MACHINE\n\nUsage:\nslot <bet>",
-        threadID
-      );
-    }
-
-    if (bal[senderID] < bet) {
+    if (bal[senderID] < bet)
       return api.sendMessage("❌ Not enough balance.", threadID);
+
+    // 🎯 BASE WIN RATE
+    let winChance = 0.25;
+
+    // 🔁 LOSE STREAK PROTECTION
+    if (slotData[senderID].loseStreak >= 3) {
+      winChance += 0.3; // guaranteed comeback
     }
 
-    /* ================= LUCKY CHARM ================= */
-    const hasCharm = inv[senderID].lucky_charm > 0;
-    if (hasCharm) {
+    // 🍀 Lucky Charm
+    if (inv[senderID].lucky_charm > 0) {
+      winChance += 0.25;
       inv[senderID].lucky_charm--;
       if (inv[senderID].lucky_charm <= 0)
         delete inv[senderID].lucky_charm;
     }
 
-    bal[senderID] -= bet;
-    fs.writeFileSync(INV_PATH, JSON.stringify(inv, null, 2));
-    fs.writeFileSync(BAL_PATH, JSON.stringify(bal, null, 2));
+    // 🎰 SPIN
+    const spin = [
+      SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
+      SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
+      SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)]
+    ];
 
-    /* ================= ANIMATION ================= */
-    await api.sendMessage("🎰 Spinning...", threadID);
-    await delay(900);
-
-    const reels = ["🍒", "🍋", "🍉", "⭐", "💎"];
-    const spin = () => reels[Math.floor(Math.random() * reels.length)];
-    const result = [spin(), spin(), spin()];
-
-    const winChance = hasCharm ? 0.45 : 0.25;
     const isWin =
-      Math.random() < winChance &&
-      result[0] === result[1] &&
-      result[1] === result[2];
+      spin[0] === spin[1] && spin[1] === spin[2] ||
+      Math.random() < winChance;
 
-    let msg =
+    bal[senderID] -= bet;
+
+    let resultMsg =
       "╔════════════════════╗\n" +
       "🎰 SLOT RESULT 🎰\n" +
       "╚════════════════════╝\n\n" +
-      `${result.join(" | ")}\n\n`;
+      `${spin[0]} | ${spin[1]} | ${spin[2]}\n\n`;
 
     if (isWin) {
-      const prize = bet * 3;
-      bal[senderID] += prize;
-      msg +=
-        "🎉 YOU WON!\n" +
-        `💰 Prize: ₱${prize.toLocaleString()}\n`;
+      const reward = bet * 2;
+      bal[senderID] += reward;
+      slotData[senderID].loseStreak = 0;
+
+      resultMsg +=
+        `🎉 YOU WIN!\n` +
+        `💰 +₱${reward.toLocaleString()}`;
     } else {
-      msg += "💀 You lost this round.\n";
+      slotData[senderID].loseStreak++;
+      resultMsg +=
+        `💀 You lost ₱${bet.toLocaleString()}\n` +
+        `🔥 Lose streak: ${slotData[senderID].loseStreak}`;
     }
 
-    if (hasCharm) {
-      msg += "\n🍀 Lucky Charm was used!";
-    }
+    fs.writeFileSync(BAL, JSON.stringify(bal, null, 2));
+    fs.writeFileSync(INV, JSON.stringify(inv, null, 2));
+    fs.writeFileSync(SLOT, JSON.stringify(slotData, null, 2));
 
-    fs.writeFileSync(BAL_PATH, JSON.stringify(bal, null, 2));
-    api.sendMessage(msg, threadID);
+    api.sendMessage(resultMsg, threadID);
   }
 };
