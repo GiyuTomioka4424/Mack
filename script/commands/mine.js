@@ -1,69 +1,51 @@
 const fs = require("fs");
 const path = require("path");
 
-const USERS_PATH = path.join(__dirname, "../../data/users.json");
-const INV_PATH = path.join(__dirname, "../../data/inventory.json");
-const BAL_PATH = path.join(__dirname, "../../data/balance.json");
+const USERS = path.join(__dirname, "../../data/users.json");
+const BAL = path.join(__dirname, "../../data/balance.json");
+const INV = path.join(__dirname, "../../data/inventory.json");
 
-[USERS_PATH, INV_PATH, BAL_PATH].forEach(p => {
+[USERS, BAL, INV].forEach(p => {
   if (!fs.existsSync(p)) fs.writeFileSync(p, "{}");
 });
-
-const delay = ms => new Promise(r => setTimeout(r, ms));
 
 module.exports = {
   config: {
     name: "mine",
+    aliases: [],
     cooldown: 10,
     hasPrefix: false
   },
 
-  async run({ api, event }) {
+  run({ api, event }) {
     const { senderID, threadID } = event;
 
-    const users = JSON.parse(fs.readFileSync(USERS_PATH));
-    const inv = JSON.parse(fs.readFileSync(INV_PATH));
-    const bal = JSON.parse(fs.readFileSync(BAL_PATH));
+    const users = JSON.parse(fs.readFileSync(USERS));
+    const bal = JSON.parse(fs.readFileSync(BAL));
+    const inv = JSON.parse(fs.readFileSync(INV));
 
-    /* REGISTER CHECK */
-    if (!users[senderID]) {
-      return api.sendMessage(
-        "📝 You must register first.\nUse: register",
-        threadID
-      );
-    }
+    if (!users[senderID])
+      return api.sendMessage("📝 Register first.", threadID);
 
     inv[senderID] ??= {};
     bal[senderID] ??= 0;
 
-    /* PICKAXE CHECK */
-    if (!inv[senderID].pickaxe || inv[senderID].pickaxe < 1) {
-      return api.sendMessage(
-        "⛏️ You need a Pickaxe.\nBuy one from the shop.",
-        threadID
-      );
-    }
+    if (!inv[senderID].pickaxe)
+      return api.sendMessage("⛏️ You need a Pickaxe to mine.", threadID);
 
-    await api.sendMessage("⛏️ Mining...", threadID);
-    await delay(900);
+    const reward = Math.floor(Math.random() * 500) + 300;
+    bal[senderID] += reward;
 
-    const reward = Math.floor(Math.random() * 400) + 200;
-
+    // consume pickaxe durability
     inv[senderID].pickaxe--;
     if (inv[senderID].pickaxe <= 0)
       delete inv[senderID].pickaxe;
 
-    bal[senderID] += reward;
-
-    fs.writeFileSync(INV_PATH, JSON.stringify(inv, null, 2));
-    fs.writeFileSync(BAL_PATH, JSON.stringify(bal, null, 2));
+    fs.writeFileSync(BAL, JSON.stringify(bal, null, 2));
+    fs.writeFileSync(INV, JSON.stringify(inv, null, 2));
 
     api.sendMessage(
-      "╔════════════════════╗\n" +
-      "⛏️ MINING RESULT ⛏️\n" +
-      "╚════════════════════╝\n\n" +
-      `💰 You earned: ₱${reward.toLocaleString()}\n` +
-      `⛏️ Pickaxe used: 1`,
+      `⛏️ MINING SUCCESS\n💰 +₱${reward}\n🧰 Pickaxe left: ${inv[senderID].pickaxe || 0}`,
       threadID
     );
   }
