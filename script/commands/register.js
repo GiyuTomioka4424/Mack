@@ -2,14 +2,28 @@ const fs = require("fs");
 const path = require("path");
 const { createUser, box } = require("../../utils/userHelper");
 
-const USERS_PATH = path.join(__dirname, "../../data/users.json");
-const BAL_PATH = path.join(__dirname, "../../data/balance.json");
-const INV_PATH = path.join(__dirname, "../../data/inventory.json");
+// paths
+const DATA_DIR = path.join(__dirname, "../../data");
+const USERS_PATH = path.join(DATA_DIR, "users.json");
+const BAL_PATH = path.join(DATA_DIR, "balance.json");
+const INV_PATH = path.join(DATA_DIR, "inventory.json");
 
-if (!fs.existsSync(USERS_PATH)) fs.writeFileSync(USERS_PATH, "{}");
-if (!fs.existsSync(BAL_PATH)) fs.writeFileSync(BAL_PATH, "{}");
-if (!fs.existsSync(INV_PATH)) fs.writeFileSync(INV_PATH, "{}");
+/* ================= SAFE FILE INIT ================= */
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
+if (!fs.existsSync(USERS_PATH)) {
+  fs.writeFileSync(USERS_PATH, JSON.stringify({}, null, 2));
+}
+if (!fs.existsSync(BAL_PATH)) {
+  fs.writeFileSync(BAL_PATH, JSON.stringify({}, null, 2));
+}
+if (!fs.existsSync(INV_PATH)) {
+  fs.writeFileSync(INV_PATH, JSON.stringify({}, null, 2));
+}
+
+/* ================= COMMAND ================= */
 module.exports = {
   config: {
     name: "register",
