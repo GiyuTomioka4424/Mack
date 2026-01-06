@@ -6,170 +6,143 @@ const login = require("ws3-fca");
 
 const app = express();
 
-/* ================= PATHS ================= */
-const COMMAND_PATH = path.join(__dirname, "script", "commands");
-const EVENT_PATH = path.join(__dirname, "script", "events");
-const PUBLIC_PATH = path.join(__dirname, "public");
-const DATA_PATH = path.join(__dirname, "data");
+const COMMAND_DIR = path.join(__dirname, "script", "commands");
+const EVENT_DIR = path.join(__dirname, "script", "events");
 
-/* ================= ENSURE DATA ================= */
-if (!fs.existsSync(DATA_PATH)) fs.mkdirSync(DATA_PATH, { recursive: true });
-
-/* ================= GLOBAL ================= */
-global.Utils = {
+const Utils = {
   commands: new Map(),
-  handleEvent: new Map()
+  events: new Map()
 };
 
-/* ================= LOAD COMMANDS ================= */
-function loadCommands() {
-  if (!fs.existsSync(COMMAND_PATH)) return;
-
-  const files = fs.readdirSync(COMMAND_PATH).filter(f => f.endsWith(".js"));
-
-  for (const file of files) {
-    const filePath = path.join(COMMAND_PATH, file);
-    try {
-      delete require.cache[require.resolve(filePath)];
-      const cmd = require(filePath);
-
-      if (!cmd?.config?.name || typeof cmd.run !== "function") continue;
-
-      const name = cmd.config.name.toLowerCase();
-      Utils.commands.set(name, cmd);
-
-      if (Array.isArray(cmd.config.aliases)) {
-        cmd.config.aliases.forEach(a =>
-          Utils.commands.set(a.toLowerCase(), cmd)
-        );
-      }
-
-      console.log(`[CMD] Loaded: ${name}`);
-    } catch (err) {
-      console.log(`[CMD] Failed: ${file} → ${err.message}`);
+/* ===================== RECURSIVE LOADER ===================== */
+function walk(dir, callback) {
+  if (!fs.existsSync(dir)) return;
+  for (const file of fs.readdirSync(dir)) {
+    const full = path.join(dir, file);
+    if (fs.statSync(full).isDirectory()) {
+      walk(full, callback);
+    } else if (file.endsWith(".js")) {
+      callback(full);
     }
   }
 }
 
-/* ================= LOAD EVENTS ================= */
-function loadEvents() {
-  if (!fs.existsSync(EVENT_PATH)) return;
+/* ===================== LOAD COMMANDS ===================== */
+function loadCommands() {
+  Utils.commands.clear();
 
-  const files = fs.readdirSync(EVENT_PATH).filter(f => f.endsWith(".js"));
-
-  for (const file of files) {
-    const filePath = path.join(EVENT_PATH, file);
+  walk(COMMAND_DIR, (filePath) => {
     try {
       delete require.cache[require.resolve(filePath)];
-      const evt = require(filePath);
+      const cmd = require(filePath);
 
-      if (!evt?.name || typeof evt.run !== "function") continue;
+      if (!cmd?.config?.name || typeof cmd.run !== "function") return;
 
-      Utils.handleEvent.set(evt.name, evt);
-      console.log(`[EVENT] Loaded: ${evt.name}`);
-    } catch (err) {
-      console.log(`[EVENT] Failed: ${file}`);
+      const name = cmd.config.name.toLowerCase();
+      Utils.commands.set(name, cmd);
+
+      (cmd.config.aliases || []).forEach(a =>
+        Utils.commands.set(a.toLowerCase(), cmd)
+      );
+
+      console.log(`[CMD] Loaded: ${name}`);
+    } catch (e) {
+      console.log(`[CMD] Failed: ${path.basename(filePath)} → ${e.message}`);
     }
-  }
+  });
+}
+
+/* ===================== LOAD EVENTS ===================== */
+function loadEvents() {
+  Utils.events.clear();
+
+  walk(EVENT_DIR, (filePath) => {
+    try {
+      delete require.cache[require.resolve(filePath)];
+      const ev = require(filePath);
+
+      if (!ev?.name || typeof ev.run !== "function") return;
+
+      Utils.events.set(ev.name, ev);
+      console.log(`[EVENT] Loaded: ${ev.name}`);
+    } catch (e) {
+      console.log(`[EVENT] Failed: ${path.basename(filePath)} → ${e.message}`);
+    }
+  });
 }
 
 loadCommands();
 loadEvents();
 
-/* ================= EXPRESS ================= */
+/* ===================== EXPRESS ===================== */
 app.use(bodyParser.json());
-app.use(express.static(PUBLIC_PATH));
+app.use(express.static(path.join(__dirname, "public")));
 
-/* ================= COMMAND LIST (WEBSITE) ================= */
+/* ===================== WEBSITE API ===================== */
 app.get("/commands", (req, res) => {
-  const cmdSet = new Set();
-  const commands = [];
-  const handleEvent = [];
-
-  for (const cmd of Utils.commands.values()) {
-    if (cmd?.config?.name && !cmdSet.has(cmd.config.name)) {
-      cmdSet.add(cmd.config.name);
-      commands.push(cmd.config.name);
-    }
-  }
-
-  for (const evt of Utils.handleEvent.keys()) {
-    handleEvent.push(evt);
-  }
+  const unique = [...new Set(
+    [...Utils.commands.values()].map(c => c.config.name)
+  )];
 
   res.json({
-    commands: commands.sort(),
-    handleEvent: handleEvent.sort(),
-    aliases: []
+    commands: unique.sort(),
+    events: [...Utils.events.keys()].sort()
   });
 });
 
-/* ================= LOGIN ================= */
+/* ===================== LOGIN ===================== */
 app.post("/login", (req, res) => {
-  const { state, prefix = "" } = req.body;
-  if (!state) return res.json({ success: false, message: "Missing appstate" });
+  const { state, prefix } = req.body;
+
+  if (!state) {
+    return res.json({ success: false, message: "Missing appstate" });
+  }
 
   login({ appState: state }, (err, api) => {
-    if (err) return res.json({ success: false, message: err.message });
+    if (err) {
+      return res.json({ success: false, message: err.message });
+    }
 
-    api.setOptions({
-      listenEvents: true,
-      selfListen: false
-    });
+    api.setOptions({ listenEvents: true });
 
-    api.listenMqtt(async (error, event) => {
-      try {
-        if (error || !event) return;
+    api.listenMqtt((error, event) => {
+      if (error) return;
 
-        /* ===== EVENTS ===== */
-        for (const evt of Utils.handleEvent.values()) {
-          try {
-            await evt.run({ api, event });
-          } catch {}
-        }
-
-        if (!event.body) return;
-
-        const body = event.body.trim();
-        if (!body) return;
-
-        let commandName;
-        let args;
-
-        /* PREFIX */
-        if (prefix && body.startsWith(prefix)) {
-          args = body.slice(prefix.length).trim().split(/\s+/);
-          commandName = args.shift()?.toLowerCase();
-        }
-        /* NO PREFIX */
-        else {
-          args = body.split(/\s+/);
-          commandName = args.shift()?.toLowerCase();
-        }
-
-        if (!commandName) return;
-
-        const command = Utils.commands.get(commandName);
-        if (!command) return;
-
-        /* SAFE EXECUTION (NO CRASH) */
-        Promise.resolve(
-          command.run({ api, event, args })
-        ).catch(() => {
-          api.sendMessage("⚠️ Command error.", event.threadID);
-        });
-
-      } catch {
-        // never crash listener
+      /* EVENTS */
+      if (Utils.events.has(event.type)) {
+        try {
+          Utils.events.get(event.type).run({ api, event });
+        } catch {}
       }
+
+      if (!event.body) return;
+
+      const body = event.body.trim();
+      const usedPrefix = prefix || "";
+
+      if (usedPrefix && !body.startsWith(usedPrefix)) return;
+
+      const args = body.slice(usedPrefix.length).trim().split(/\s+/);
+      const commandName = args.shift()?.toLowerCase();
+
+      const command = Utils.commands.get(commandName);
+      if (!command) return;
+
+      /* SAFE EXECUTION (NO FREEZE) */
+      Promise.resolve().then(() =>
+        command.run({ api, event, args })
+      ).catch(err => {
+        console.log("[CMD ERROR]", commandName, err.message);
+        api.sendMessage("⚠️ Command error.", event.threadID);
+      });
     });
 
     res.json({ success: true, message: "Bot logged in successfully" });
   });
 });
 
-/* ================= START SERVER ================= */
+/* ===================== START ===================== */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🌐 Server running on port ${PORT}`);
+  console.log("🌐 Web running on port", PORT);
 });
