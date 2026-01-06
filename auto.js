@@ -5,27 +5,21 @@ const bodyParser = require("body-parser");
 const login = require("ws3-fca");
 
 const app = express();
+const COMMAND_PATH = path.join(__dirname, "script", "commands");
+const EVENT_PATH = path.join(__dirname, "script", "events");
 
-// paths
-const ROOT = __dirname;
-const COMMAND_PATH = path.join(ROOT, "script", "commands");
-const DATA_PATH = path.join(ROOT, "data");
-
-// utils
-const Utils = {
+/* ================= GLOBAL STORE ================= */
+global.Utils = {
   commands: new Map(),
   handleEvent: new Map()
 };
 
-/* ===================== ENSURE DATA FOLDER ===================== */
-if (!fs.existsSync(DATA_PATH)) {
-  fs.mkdirSync(DATA_PATH, { recursive: true });
-}
+/* ================= ENSURE DATA FOLDER ================= */
+const DATA_DIR = path.join(__dirname, "data");
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
-/* ===================== SAFE LOAD COMMANDS ===================== */
+/* ================= LOAD COMMANDS ================= */
 function loadCommands() {
-  Utils.commands.clear();
-
   if (!fs.existsSync(COMMAND_PATH)) {
     console.log("[CMD] commands folder not found");
     return;
@@ -35,13 +29,12 @@ function loadCommands() {
 
   for (const file of files) {
     const filePath = path.join(COMMAND_PATH, file);
-
     try {
       delete require.cache[require.resolve(filePath)];
       const cmd = require(filePath);
 
       if (!cmd?.config?.name || typeof cmd.run !== "function") {
-        console.log(`[CMD] Skipped: ${file} (invalid format)`);
+        console.log(`[CMD] Skipped: ${file}`);
         continue;
       }
 
@@ -61,69 +54,95 @@ function loadCommands() {
   }
 }
 
-loadCommands();
+/* ================= LOAD EVENTS ================= */
+function loadEvents() {
+  if (!fs.existsSync(EVENT_PATH)) return;
 
-/* ===================== EXPRESS ===================== */
-app.use(bodyParser.json());
-app.use(express.static(path.join(ROOT, "public")));
+  const files = fs.readdirSync(EVENT_PATH).filter(f => f.endsWith(".js"));
 
-/* ===================== COMMAND LIST API ===================== */
-app.get("/commands", (req, res) => {
-  const unique = new Set();
-  const commands = [];
-
-  for (const cmd of Utils.commands.values()) {
-    if (!unique.has(cmd.config.name)) {
-      unique.add(cmd.config.name);
-      commands.push(cmd.config.name);
+  for (const file of files) {
+    try {
+      const evt = require(path.join(EVENT_PATH, file));
+      if (evt?.name && typeof evt.run === "function") {
+        Utils.handleEvent.set(evt.name, evt);
+        console.log(`[EVENT] Loaded: ${evt.name}`);
+      }
+    } catch (err) {
+      console.log(`[EVENT] Failed: ${file}`);
     }
   }
+}
 
-  res.json({
-    commands,
-    events: []
-  });
+loadCommands();
+loadEvents();
+
+/* ================= EXPRESS ================= */
+app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, "public")));
+
+/* ================= COMMANDS API (WEBSITE FIX) ================= */
+app.get("/commands", (req, res) => {
+  try {
+    const uniqueCommands = new Set();
+    const commandList = [];
+    const eventList = [];
+
+    for (const cmd of Utils.commands.values()) {
+      if (cmd?.config?.name && !uniqueCommands.has(cmd.config.name)) {
+        uniqueCommands.add(cmd.config.name);
+        commandList.push(cmd.config.name);
+      }
+    }
+
+    if (fs.existsSync(EVENT_PATH)) {
+      const files = fs.readdirSync(EVENT_PATH).filter(f => f.endsWith(".js"));
+      for (const f of files) {
+        eventList.push(f.replace(".js", ""));
+      }
+    }
+
+    res.json({
+      commands: commandList.sort(),
+      handleEvent: eventList.sort(),
+      aliases: []
+    });
+  } catch (e) {
+    res.json({ commands: [], handleEvent: [], aliases: [] });
+  }
 });
 
-/* ===================== LOGIN ===================== */
-app.post("/login", (req, res) => {
+/* ================= LOGIN ================= */
+app.post("/login", async (req, res) => {
   const { state, prefix } = req.body;
-
-  if (!state) {
-    return res.json({ success: false, message: "Missing appstate" });
-  }
+  if (!state) return res.json({ success: false, message: "Missing appstate" });
 
   login({ appState: state }, (err, api) => {
-    if (err) {
-      return res.json({ success: false, message: err.message });
-    }
+    if (err) return res.json({ success: false, message: err.message });
 
     api.setOptions({ listenEvents: true });
 
     api.listenMqtt((error, event) => {
-      if (error || !event.body) return;
+      if (error || !event?.body) return;
 
-      let body = event.body.trim();
-      let args = [];
-      let commandName = "";
-
-      // ✅ NO PREFIX MODE
-      if (!prefix || prefix === false) {
-        args = body.split(/\s+/);
-        commandName = args.shift().toLowerCase();
-      } else {
-        if (!body.startsWith(prefix)) return;
-        args = body.slice(prefix.length).trim().split(/\s+/);
-        commandName = args.shift().toLowerCase();
+      /* EVENTS */
+      if (Utils.handleEvent.has(event.type)) {
+        try {
+          Utils.handleEvent.get(event.type).run({ api, event });
+        } catch {}
       }
 
+      /* COMMANDS */
+      if (!prefix || !event.body.startsWith(prefix)) return;
+
+      const args = event.body.slice(prefix.length).trim().split(/\s+/);
+      const commandName = args.shift().toLowerCase();
       const command = Utils.commands.get(commandName);
+
       if (!command) return;
 
       try {
         command.run({ api, event, args });
       } catch (e) {
-        console.error(e);
         api.sendMessage("⚠️ Command error.", event.threadID);
       }
     });
@@ -132,8 +151,8 @@ app.post("/login", (req, res) => {
   });
 });
 
-/* ===================== START SERVER ===================== */
+/* ================= START ================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🌐 Server running on port ${PORT}`);
+  console.log(`🌐 Server running on http://localhost:${PORT}`);
 });
