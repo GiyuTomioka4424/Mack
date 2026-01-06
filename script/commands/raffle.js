@@ -9,7 +9,9 @@ const ADMIN_UID = "61562953390569";
 const CASH_REWARD = 20000;
 const MYSTERY_ITEMS = ["lucky_charm", "pickaxe", "lotto_ticket"];
 
-/* ================= INIT FILE ================= */
+/* ================= ENSURE FILES ================= */
+if (!fs.existsSync(USERS_PATH)) fs.writeFileSync(USERS_PATH, "{}");
+if (!fs.existsSync(INV_PATH)) fs.writeFileSync(INV_PATH, "{}");
 if (!fs.existsSync(RAFFLE_PATH)) {
   fs.writeFileSync(
     RAFFLE_PATH,
@@ -31,11 +33,9 @@ module.exports = {
 
     const raffle = JSON.parse(fs.readFileSync(RAFFLE_PATH, "utf8"));
     const users = JSON.parse(fs.readFileSync(USERS_PATH, "utf8"));
-    const inventory = fs.existsSync(INV_PATH)
-      ? JSON.parse(fs.readFileSync(INV_PATH, "utf8"))
-      : {};
+    const inventory = JSON.parse(fs.readFileSync(INV_PATH, "utf8"));
 
-    /* ================= RAFFLE JOIN (FREE) ================= */
+    /* ================= PLAYER JOIN ================= */
     if (args[0] === "join") {
       if (!users[senderID]) {
         return api.sendMessage(
@@ -52,10 +52,7 @@ module.exports = {
       }
 
       if (raffle.players.includes(senderID)) {
-        return api.sendMessage(
-          "⚠️ You already joined the raffle.",
-          threadID
-        );
+        return api.sendMessage("⚠️ You already joined the raffle.", threadID);
       }
 
       raffle.players.push(senderID);
@@ -65,13 +62,12 @@ module.exports = {
         "╔════════════════════╗\n" +
         "🎟️ RAFFLE JOINED\n" +
         "╚════════════════════╝\n\n" +
-        "✅ You are now included in the raffle!\n\n" +
-        "🍀 Good luck!",
+        "✅ You are now included in the raffle!\n🍀 Good luck!",
         threadID
       );
     }
 
-    /* ================= ADMIN ONLY BELOW ================= */
+    /* ================= ADMIN ONLY ================= */
     if (senderID !== ADMIN_UID) {
       return api.sendMessage(
         "⛔ Only the admin can manage the raffle.",
@@ -79,7 +75,7 @@ module.exports = {
       );
     }
 
-    /* ================= START RAFFLE ================= */
+    /* ================= START ================= */
     if (args[0] === "start") {
       if (raffle.open) {
         return api.sendMessage(
@@ -90,7 +86,6 @@ module.exports = {
 
       raffle.open = true;
       raffle.players = [];
-
       fs.writeFileSync(RAFFLE_PATH, JSON.stringify(raffle, null, 2));
 
       return announceAll(
@@ -98,16 +93,14 @@ module.exports = {
         "╔════════════════════╗\n" +
         "🎟️ RAFFLE OPENED\n" +
         "╚════════════════════╝\n\n" +
-        "🔥 The raffle is now OPEN!\n\n" +
-        "🎁 Prizes:\n" +
+        "🎁 PRIZES:\n" +
         "• 💰 20,000 coins (2 winners)\n" +
         "• 🎁 Mystery item (2 winners)\n\n" +
-        "📌 Join now using:\n" +
-        "raffle join"
+        "📌 Join now using:\nraffle join"
       );
     }
 
-    /* ================= SPIN RAFFLE ================= */
+    /* ================= SPIN ================= */
     if (args[0] === "spin") {
       if (!raffle.open) {
         return api.sendMessage(
@@ -126,22 +119,25 @@ module.exports = {
       shuffle(raffle.players);
       const winners = raffle.players.slice(0, 4);
 
-      /* ===== CASH WINNERS ===== */
+      const cashWinners = [];
+      const itemWinners = [];
+
+      /* 💰 CASH */
       for (let i = 0; i < 2; i++) {
         const uid = winners[i];
-        if (!users[uid]) continue;
         users[uid].money = (users[uid].money || 0) + CASH_REWARD;
+        cashWinners.push(users[uid].name);
       }
 
-      /* ===== MYSTERY WINNERS ===== */
+      /* 🎁 ITEMS */
       for (let i = 2; i < 4; i++) {
         const uid = winners[i];
-        if (!inventory[uid]) inventory[uid] = {};
+        inventory[uid] ??= {};
         const item = random(MYSTERY_ITEMS);
         inventory[uid][item] = (inventory[uid][item] || 0) + 1;
+        itemWinners.push(users[uid].name);
       }
 
-      /* ================= AUTO CLOSE ================= */
       raffle.open = false;
       raffle.players = [];
 
@@ -154,18 +150,17 @@ module.exports = {
         "╔════════════════════╗\n" +
         "🎉 RAFFLE RESULTS 🎉\n" +
         "╚════════════════════╝\n\n" +
-        "💰 CASH WINNERS (20,000):\n" +
-        `• ${winners[0]}\n• ${winners[1]}\n\n` +
-        "🎁 MYSTERY GIFT WINNERS:\n" +
-        `• ${winners[2]}\n• ${winners[3]}\n\n` +
-        "🔒 Raffle is now CLOSED.\n" +
-        "📌 Admin must use raffle start again."
+        "💰 CASH WINNERS:\n" +
+        cashWinners.map(n => `• ${n}`).join("\n") +
+        "\n\n🎁 MYSTERY ITEM WINNERS:\n" +
+        itemWinners.map(n => `• ${n}`).join("\n") +
+        "\n\n🔒 Raffle is now CLOSED.\nAdmin must start again."
       );
     }
 
     /* ================= HELP ================= */
     api.sendMessage(
-      "Usage:\n" +
+      "RAFFLE COMMANDS:\n" +
       "raffle start\n" +
       "raffle join\n" +
       "raffle spin",
@@ -189,7 +184,6 @@ function random(arr) {
 
 function announceAll(api, message) {
   api.getThreadList(100, null, ["INBOX"], (err, list) => {
-    if (err) return;
-    list.forEach(t => api.sendMessage(message, t.threadID));
+    if (!err) list.forEach(t => api.sendMessage(message, t.threadID));
   });
 }
