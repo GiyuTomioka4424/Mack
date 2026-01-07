@@ -5,13 +5,16 @@ const USERS_PATH = path.join(__dirname, "../../data/users.json");
 const BAL_PATH = path.join(__dirname, "../../data/balance.json");
 const INV_PATH = path.join(__dirname, "../../data/inventory.json");
 const BANK_PATH = path.join(__dirname, "../../data/bank.json");
+const SLOT_CD = path.join(__dirname, "../../data/slotCooldown.json");
 
 if (!fs.existsSync(USERS_PATH)) fs.writeFileSync(USERS_PATH, "{}");
 if (!fs.existsSync(BAL_PATH)) fs.writeFileSync(BAL_PATH, "{}");
 if (!fs.existsSync(INV_PATH)) fs.writeFileSync(INV_PATH, "{}");
 if (!fs.existsSync(BANK_PATH)) fs.writeFileSync(BANK_PATH, "{}");
+if (!fs.existsSync(SLOT_CD)) fs.writeFileSync(SLOT_CD, "{}");
 
 const SYMBOLS = ["🍒", "🍋", "🍉", "⭐", "💎"];
+const COOLDOWN = 5000; // 5 seconds anti-spam
 
 function spin() {
   return [
@@ -21,16 +24,10 @@ function spin() {
   ];
 }
 
-function isWin(reels) {
-  return reels[0] === reels[1] && reels[1] === reels[2];
-}
-
 module.exports = {
   config: {
     name: "slot",
-    aliases: [],
-    role: 0,
-    cooldown: 5,
+    cooldown: 0,
     hasPrefix: false
   },
 
@@ -41,67 +38,52 @@ module.exports = {
     const balance = JSON.parse(fs.readFileSync(BAL_PATH));
     const inventory = JSON.parse(fs.readFileSync(INV_PATH));
     const bank = JSON.parse(fs.readFileSync(BANK_PATH));
+    const cd = JSON.parse(fs.readFileSync(SLOT_CD));
 
-    /* 📝 REGISTER CHECK */
+    /* REGISTER */
     if (!users[senderID]) {
+      return api.sendMessage("📝 Register first using:\nregister <name>", threadID);
+    }
+
+    /* LOAN BLOCK */
+    if ((bank[senderID]?.loan || 0) > 0) {
       return api.sendMessage(
-        "📝 You must register first.\nUse: register <name>",
+        "🚫 SLOT LOCKED\nPay your loan first.",
         threadID
       );
     }
 
-    /* INIT */
-    balance[senderID] = Number(balance[senderID]) || 0;
-    inventory[senderID] = inventory[senderID] || {};
-    bank[senderID] = bank[senderID] || { loan: 0 };
-    users[senderID].loseStreak = users[senderID].loseStreak || 0;
-
-    /* 🚫 LOAN CHECK */
-    if (bank[senderID].loan > 0) {
-      return api.sendMessage(
-        "🚫 SLOT LOCKED\n\n" +
-        "You have an active loan.\nPay it first before playing slot.",
-        threadID
-      );
+    /* ANTI SPAM */
+    const now = Date.now();
+    if (cd[senderID] && now - cd[senderID] < COOLDOWN) {
+      return api.sendMessage("⏳ Slow down! Wait a few seconds.", threadID);
     }
+    cd[senderID] = now;
 
     const bet = parseInt(args[0]);
     if (!bet || bet <= 0) {
-      return api.sendMessage(
-        "🎰 SLOT MACHINE 🎰\n\nUsage:\nslot <bet>",
-        threadID
-      );
+      return api.sendMessage("🎰 Usage:\nslot <bet>", threadID);
     }
+
+    balance[senderID] ??= 0;
+    inventory[senderID] ??= {};
 
     if (balance[senderID] < bet) {
-      return api.sendMessage(
-        `❌ Not enough balance.\n💰 Balance: ₱${balance[senderID].toLocaleString()}`,
-        threadID
-      );
+      return api.sendMessage("❌ Not enough balance.", threadID);
     }
 
-    /* ================= WIN LOGIC ================= */
-
-    let baseChance = 0.25;
-    let charmBonus = 0;
+    let winChance = 0.25;
     let usedCharm = false;
 
-    // 🔥 Lose streak protection
-    if (users[senderID].loseStreak >= 3) {
-      baseChance = 0.6;
-    }
-
-    // 🍀 Lucky Charm (only used if win)
     if (inventory[senderID].lucky_charm > 0) {
-      charmBonus = 0.2;
+      winChance = 0.45;
+      inventory[senderID].lucky_charm -= 1;
+      usedCharm = true;
     }
 
+    balance[senderID] -= bet;
     const reels = spin();
-    const win =
-      Math.random() < (baseChance + charmBonus) ||
-      isWin(reels);
-
-    /* ================= APPLY RESULT ================= */
+    const win = Math.random() < winChance;
 
     let msg =
       "╔════════════════════╗\n" +
@@ -109,36 +91,19 @@ module.exports = {
       "╚════════════════════╝\n\n" +
       `${reels.join(" | ")}\n\n`;
 
-    balance[senderID] -= bet;
-
     if (win) {
-      const reward = bet * 2;
+      const reward = bet * 3;
       balance[senderID] += reward;
-      users[senderID].loseStreak = 0;
-
-      if (inventory[senderID].lucky_charm > 0) {
-        inventory[senderID].lucky_charm -= 1;
-        usedCharm = true;
-      }
-
-      msg +=
-        "🎉 YOU WON!\n\n" +
-        `💰 Prize: ₱${reward.toLocaleString()}`;
+      msg += `🎉 YOU WON!\n💰 Prize: ₱${reward.toLocaleString()}`;
     } else {
-      users[senderID].loseStreak += 1;
-      msg +=
-        `💀 You lost ₱${bet.toLocaleString()}\n` +
-        `🔥 Lose streak: ${users[senderID].loseStreak}`;
+      msg += "💀 You lost this round.";
     }
 
-    if (usedCharm) {
-      msg += "\n\n🍀 Lucky Charm activated!";
-    }
+    if (usedCharm) msg += "\n🍀 Lucky Charm used";
 
-    /* SAVE */
     fs.writeFileSync(BAL_PATH, JSON.stringify(balance, null, 2));
     fs.writeFileSync(INV_PATH, JSON.stringify(inventory, null, 2));
-    fs.writeFileSync(USERS_PATH, JSON.stringify(users, null, 2));
+    fs.writeFileSync(SLOT_CD, JSON.stringify(cd, null, 2));
 
     api.sendMessage(msg, threadID);
   }
