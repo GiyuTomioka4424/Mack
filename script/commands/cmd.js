@@ -2,24 +2,23 @@ const fs = require("fs");
 const path = require("path");
 
 const ADMIN_UID = "61562953390569";
-const COMMAND_DIR = path.join(__dirname, "../commands"); // ✅ FIXED PATH
+const COMMAND_DIR = __dirname; // script/commands
 
 module.exports = {
   config: {
     name: "cmd",
     aliases: ["command"],
-    role: 0,
     cooldown: 5,
     hasPrefix: false
   },
 
-  run({ api, event, args }) {
-    const { senderID, threadID } = event;
+  async run({ api, event, args }) {
+    const { senderID, threadID, body } = event;
 
-    /* 🔒 ADMIN CHECK */
+    /* 🔒 ADMIN ONLY */
     if (senderID !== ADMIN_UID) {
       return api.sendMessage(
-        "⛔ ACCESS DENIED\n\nOnly the bot admin can manage commands.",
+        "⛔ ACCESS DENIED\nOnly the bot admin can manage commands.",
         threadID
       );
     }
@@ -27,13 +26,12 @@ module.exports = {
     /* ================= HELP ================= */
     if (!args[0]) {
       return api.sendMessage(
-        "📦 CMD MANAGER\n\n" +
-        "Commands:\n" +
+        "╔════════════════════╗\n" +
+        "📦 CMD MANAGER\n" +
+        "╚════════════════════╝\n\n" +
         "cmd install <file>.js <code>\n" +
         "cmd uninstall <file>.js\n\n" +
-        "⚠️ Note:\n" +
-        "• Restart bot after install/uninstall\n" +
-        "• File name must end with .js",
+        "⚡ No restart required",
         threadID
       );
     }
@@ -42,13 +40,7 @@ module.exports = {
     if (args[0] === "install") {
       const fileName = args[1];
 
-      /* 🛑 VALIDATION */
-      if (
-        !fileName ||
-        !fileName.endsWith(".js") ||
-        fileName.includes("/") ||
-        fileName.includes("\\")
-      ) {
+      if (!fileName || !fileName.endsWith(".js")) {
         return api.sendMessage(
           "❌ Invalid filename.\nExample:\ncmd install test.js",
           threadID
@@ -57,42 +49,50 @@ module.exports = {
 
       const filePath = path.join(COMMAND_DIR, fileName);
 
-      if (fs.existsSync(filePath)) {
-        return api.sendMessage(
-          "⚠️ Command already exists.\nUninstall it first.",
-          threadID
-        );
-      }
+      /* extract code after filename */
+      const codeIndex = body.indexOf(fileName) + fileName.length;
+      const code = body.slice(codeIndex).trim();
 
-      /* 📦 EXTRACT CODE */
-      const code = args.slice(2).join(" ");
-
-      if (!code) {
+      if (!code || !code.includes("module.exports")) {
         return api.sendMessage(
-          "❌ No code detected.\nPaste command code after filename.",
-          threadID
-        );
-      }
-
-      if (!code.includes("module.exports")) {
-        return api.sendMessage(
-          "❌ Invalid command format.\nMissing module.exports.",
+          "❌ Invalid command code.\nMust include module.exports",
           threadID
         );
       }
 
       try {
-        fs.writeFileSync(filePath, code, "utf8");
+        /* write file */
+        fs.writeFileSync(filePath, code);
+
+        /* hot reload */
+        delete require.cache[require.resolve(filePath)];
+        const cmd = require(filePath);
+
+        if (!cmd?.config?.name || typeof cmd.run !== "function") {
+          fs.unlinkSync(filePath);
+          return api.sendMessage(
+            "❌ Invalid command format.\nMissing config or run()",
+            threadID
+          );
+        }
+
+        /* register command */
+        global.Utils.commands.set(cmd.config.name.toLowerCase(), cmd);
+        (cmd.config.aliases || []).forEach(a =>
+          global.Utils.commands.set(a.toLowerCase(), cmd)
+        );
 
         return api.sendMessage(
           "✅ COMMAND INSTALLED\n\n" +
-          `📁 File: ${fileName}\n\n` +
-          "🔁 Restart the bot to load the new command.",
+          `📁 File: ${fileName}\n` +
+          `⚡ Loaded instantly\n` +
+          `📌 Command: ${cmd.config.name}`,
           threadID
         );
+
       } catch (err) {
         return api.sendMessage(
-          "❌ Failed to install command.\n" + err.message,
+          "❌ INSTALL FAILED\n\n" + err.message,
           threadID
         );
       }
@@ -102,12 +102,7 @@ module.exports = {
     if (args[0] === "uninstall") {
       const fileName = args[1];
 
-      if (
-        !fileName ||
-        !fileName.endsWith(".js") ||
-        fileName.includes("/") ||
-        fileName.includes("\\")
-      ) {
+      if (!fileName || !fileName.endsWith(".js")) {
         return api.sendMessage(
           "❌ Invalid filename.\nExample:\ncmd uninstall test.js",
           threadID
@@ -121,17 +116,26 @@ module.exports = {
       }
 
       try {
+        /* unload */
+        delete require.cache[require.resolve(filePath)];
+        const cmd = require(filePath);
+
+        global.Utils.commands.delete(cmd.config.name.toLowerCase());
+        (cmd.config.aliases || []).forEach(a =>
+          global.Utils.commands.delete(a.toLowerCase())
+        );
+
         fs.unlinkSync(filePath);
 
         return api.sendMessage(
-          "🗑️ COMMAND UNINSTALLED\n\n" +
-          `📁 Removed: ${fileName}\n\n` +
-          "🔁 Restart the bot to apply changes.",
+          "🗑️ COMMAND REMOVED\n\n" +
+          `📁 File: ${fileName}\n` +
+          "⚡ Unloaded instantly",
           threadID
         );
       } catch (err) {
         return api.sendMessage(
-          "❌ Failed to uninstall command.\n" + err.message,
+          "❌ UNINSTALL FAILED\n\n" + err.message,
           threadID
         );
       }
