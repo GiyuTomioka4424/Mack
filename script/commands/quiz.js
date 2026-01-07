@@ -1,18 +1,17 @@
-const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const axios = require("axios");
 
 const USERS_PATH = path.join(__dirname, "../../data/users.json");
 const BAL_PATH = path.join(__dirname, "../../data/balance.json");
+const QUIZ_PATH = path.join(__dirname, "../../data/quiz.json");
 
 if (!fs.existsSync(USERS_PATH)) fs.writeFileSync(USERS_PATH, "{}");
 if (!fs.existsSync(BAL_PATH)) fs.writeFileSync(BAL_PATH, "{}");
+if (!fs.existsSync(QUIZ_PATH)) fs.writeFileSync(QUIZ_PATH, "{}");
 
-const CATEGORIES = [
-  "gk","music","videogame","naturescience","computerscience",
-  "math","mythology","sports","geography","history",
-  "politics","art","celebrety","anime","cartoon"
-];
+const REWARD = 500;
+const TIMEOUT = 20000; // 20s
 
 module.exports = {
   config: {
@@ -24,12 +23,13 @@ module.exports = {
   },
 
   async run({ api, event, args }) {
-    const { senderID, threadID } = event;
+    const { senderID, threadID, body } = event;
 
     const users = JSON.parse(fs.readFileSync(USERS_PATH));
     const balance = JSON.parse(fs.readFileSync(BAL_PATH));
+    const quizData = JSON.parse(fs.readFileSync(QUIZ_PATH));
 
-    /* 🔒 REGISTER CHECK */
+    /* 📝 REGISTER CHECK */
     if (!users[senderID]) {
       return api.sendMessage(
         "📝 You must register first.\nUse: register <name>",
@@ -37,89 +37,80 @@ module.exports = {
       );
     }
 
-    balance[senderID] ??= 0;
+    /* ================= ANSWER HANDLER ================= */
+    if (quizData[threadID]) {
+      const answer = body.trim().toUpperCase();
+      const correct = quizData[threadID].answer;
 
-    /* ================= LIST ================= */
-    if (args[0] === "list") {
-      return api.sendMessage(
-        "📚 QUIZ CATEGORIES\n\n" +
-        CATEGORIES.join(", "),
-        threadID
-      );
-    }
+      if (!["A", "B", "C", "D"].includes(answer)) return;
 
-    /* ================= TOP ================= */
-    if (args[0] === "top") {
-      const sorted = Object.entries(balance)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5);
+      delete quizData[threadID];
+      fs.writeFileSync(QUIZ_PATH, JSON.stringify(quizData, null, 2));
 
-      if (!sorted.length) {
-        return api.sendMessage("No players yet.", threadID);
+      if (answer === correct) {
+        balance[senderID] = (balance[senderID] || 0) + REWARD;
+        fs.writeFileSync(BAL_PATH, JSON.stringify(balance, null, 2));
+
+        return api.sendMessage(
+          "🎉 CORRECT ANSWER!\n\n" +
+          `✅ You earned ₱${REWARD.toLocaleString()}`,
+          threadID
+        );
+      } else {
+        return api.sendMessage(
+          `❌ WRONG ANSWER\n\nCorrect answer was: ${correct}`,
+          threadID
+        );
       }
-
-      let msg =
-        "╔════════════════════╗\n" +
-        "🏆 QUIZ TOP PLAYERS\n" +
-        "╚════════════════════╝\n\n";
-
-      sorted.forEach(([uid, money], i) => {
-        const name = users[uid]?.name || uid;
-        msg += `${i + 1}. ${name} — ₱${money}\n`;
-      });
-
-      return api.sendMessage(msg, threadID);
     }
 
     /* ================= START QUIZ ================= */
-    const category = args[0];
+    const category = args[0] || "anime";
 
-    if (!category || !CATEGORIES.includes(category)) {
-      return api.sendMessage(
-        "❌ Invalid category.\n\n" +
-        "Use:\nquiz list\nquiz <category>",
-        threadID
-      );
-    }
-
+    let res;
     try {
-      const res = await axios.get(
+      res = await axios.get(
         `https://new-quiz-black.vercel.app/quiz?category=${category}`
       );
-
-      const { question, options, correct_answer_letter } = res.data;
-
-      let msg =
-        "╔════════════════════╗\n" +
-        "🧠 QUIZ TIME\n" +
-        "╚════════════════════╝\n\n" +
-        `📚 Category: ${category}\n\n` +
-        `❓ ${question}\n\n`;
-
-      options.forEach((o, i) => {
-        msg += `${String.fromCharCode(65 + i)}. ${o.answer}\n`;
-      });
-
-      msg +=
-        "\nReply with:\n" +
-        `quiz answer ${correct_answer_letter}`;
-
-      api.sendMessage(msg, threadID);
-
-      /* AUTO CHECK (SIMPLE MODE) */
-      setTimeout(() => {
-        api.sendMessage(
-          "⏱️ Time's up!\n\n" +
-          `Correct answer: ${correct_answer_letter}`,
-          threadID
-        );
-      }, 20000);
-
     } catch {
-      api.sendMessage(
-        "❌ Failed to fetch quiz.\nTry again later.",
-        threadID
-      );
+      return api.sendMessage("❌ Failed to fetch quiz.", threadID);
     }
+
+    const q = res.data;
+    if (!q || !q.options) {
+      return api.sendMessage("❌ Invalid quiz data.", threadID);
+    }
+
+    const options = q.options.map(
+      (o, i) => `${String.fromCharCode(65 + i)}. ${o.answer}`
+    ).join("\n");
+
+    quizData[threadID] = {
+      answer: q.correct_answer_letter
+    };
+
+    fs.writeFileSync(QUIZ_PATH, JSON.stringify(quizData, null, 2));
+
+    api.sendMessage(
+      "╔════════════════════╗\n" +
+      "🧠 QUIZ TIME 🧠\n" +
+      "╚════════════════════╝\n\n" +
+      `📚 Category: ${category}\n\n` +
+      `❓ ${q.question}\n\n` +
+      `${options}\n\n` +
+      "✏️ Reply with: A / B / C / D\n" +
+      "⏳ You have 20 seconds",
+      threadID
+    );
+
+    /* ⏳ AUTO EXPIRE */
+    setTimeout(() => {
+      const data = JSON.parse(fs.readFileSync(QUIZ_PATH));
+      if (data[threadID]) {
+        delete data[threadID];
+        fs.writeFileSync(QUIZ_PATH, JSON.stringify(data, null, 2));
+        api.sendMessage("⌛ Quiz expired.", threadID);
+      }
+    }, TIMEOUT);
   }
 };
