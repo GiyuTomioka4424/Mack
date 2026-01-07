@@ -2,109 +2,98 @@ const fs = require("fs");
 const path = require("path");
 
 const USERS_PATH = path.join(__dirname, "../../data/users.json");
-const INV_PATH = path.join(__dirname, "../../data/inventory.json");
 const BAL_PATH = path.join(__dirname, "../../data/balance.json");
-const COOLDOWN = 5000; // 5 seconds anti-spam
+const INV_PATH = path.join(__dirname, "../../data/inventory.json");
 
 if (!fs.existsSync(USERS_PATH)) fs.writeFileSync(USERS_PATH, "{}");
-if (!fs.existsSync(INV_PATH)) fs.writeFileSync(INV_PATH, "{}");
 if (!fs.existsSync(BAL_PATH)) fs.writeFileSync(BAL_PATH, "{}");
+if (!fs.existsSync(INV_PATH)) fs.writeFileSync(INV_PATH, "{}");
+
+const cooldown = new Map();
+const COOLDOWN = 10 * 1000;
 
 module.exports = {
   config: {
     name: "mine",
     aliases: [],
-    cooldown: 0, // handled manually
+    role: 0,
+    cooldown: 5,
     hasPrefix: false
   },
 
   run({ api, event }) {
     const { senderID, threadID } = event;
 
-    const users = JSON.parse(fs.readFileSync(USERS_PATH, "utf8"));
-    const inventory = JSON.parse(fs.readFileSync(INV_PATH, "utf8"));
-    const balance = JSON.parse(fs.readFileSync(BAL_PATH, "utf8"));
-
-    /* ================= REGISTER CHECK ================= */
-    if (!users[senderID]) {
-      return api.sendMessage(
-        "📝 You must register first.\nUse: register <name>",
-        threadID
-      );
-    }
-
-    /* ================= ANTI SPAM ================= */
+    /* ⏱️ ANTI SPAM */
     const now = Date.now();
-    users[senderID].lastMine ??= 0;
+    if (cooldown.has(senderID) && now - cooldown.get(senderID) < COOLDOWN) {
+      return api.sendMessage("⏳ Please wait before mining again.", threadID);
+    }
+    cooldown.set(senderID, now);
 
-    if (now - users[senderID].lastMine < COOLDOWN) {
-      const wait = ((COOLDOWN - (now - users[senderID].lastMine)) / 1000).toFixed(1);
-      return api.sendMessage(
-        `⏳ Slow down!\nYou can mine again in ${wait}s.`,
-        threadID
-      );
+    const users = JSON.parse(fs.readFileSync(USERS_PATH));
+    const balance = JSON.parse(fs.readFileSync(BAL_PATH));
+    const inventory = JSON.parse(fs.readFileSync(INV_PATH));
+
+    if (!users[senderID]) {
+      return api.sendMessage("📝 Register first using: register <name>", threadID);
     }
 
-    users[senderID].lastMine = now;
-
-    /* ================= INIT DATA ================= */
+    balance[senderID] ??= 0;
     inventory[senderID] ??= {};
-    balance[senderID] = Number(balance[senderID]) || 0;
-    users[senderID].mined = Number(users[senderID].mined) || 0;
 
-    /* ================= PICKAXE CHECK ================= */
+    /* 🔁 AUTO FIX OLD PICKAXE FORMAT */
     if (
-      !inventory[senderID].pickaxe ||
-      typeof inventory[senderID].pickaxe.hp !== "number"
+      inventory[senderID].pickaxe &&
+      typeof inventory[senderID].pickaxe === "number"
     ) {
+      inventory[senderID].pickaxe = { hp: 300 };
+    }
+
+    const pickaxe = inventory[senderID].pickaxe;
+
+    if (!pickaxe || typeof pickaxe.hp !== "number") {
       return api.sendMessage(
-        "⛏️ NO PICKAXE\n\n" +
-        "You need a pickaxe to mine.\n\n" +
-        "Buy one from the shop:\n" +
-        "shop buy pickaxe 1",
+        "⛏️ NO PICKAXE\n\nBuy one from shop:\nshop buy pickaxe 1",
         threadID
       );
     }
 
-    /* ================= USE PICKAXE ================= */
-    inventory[senderID].pickaxe.hp -= 1;
+    /* 🍀 LUCKY CHARM */
+    let min = 200, max = 500;
+    let usedCharm = false;
 
-    /* ================= PICKAXE BROKE ================= */
-    if (inventory[senderID].pickaxe.hp <= 0) {
-      delete inventory[senderID].pickaxe;
-
-      fs.writeFileSync(INV_PATH, JSON.stringify(inventory, null, 2));
-      fs.writeFileSync(USERS_PATH, JSON.stringify(users, null, 2));
-
-      return api.sendMessage(
-        "💥 PICKAXE BROKE!\n\n" +
-        "Your pickaxe has reached 0 durability.\n\n" +
-        "🛒 Buy a new one from the shop:\n" +
-        "shop buy pickaxe 1",
-        threadID
-      );
+    if (inventory[senderID].lucky_charm > 0) {
+      min = 400;
+      max = 900;
+      inventory[senderID].lucky_charm--;
+      usedCharm = true;
     }
 
-    /* ================= MINING REWARD ================= */
-    const reward = Math.floor(Math.random() * 300) + 150;
+    const earned = Math.floor(Math.random() * (max - min + 1)) + min;
+    const hpUsed = Math.floor(Math.random() * 4) + 1;
 
-    balance[senderID] += reward;
-    users[senderID].mined += reward;
+    balance[senderID] += earned;
+    pickaxe.hp -= hpUsed;
 
-    /* ================= SAVE ================= */
-    fs.writeFileSync(BAL_PATH, JSON.stringify(balance, null, 2));
-    fs.writeFileSync(INV_PATH, JSON.stringify(inventory, null, 2));
-    fs.writeFileSync(USERS_PATH, JSON.stringify(users, null, 2));
-
-    /* ================= RESULT ================= */
-    api.sendMessage(
+    let msg =
       "╔════════════════════╗\n" +
       "⛏️ MINING RESULT\n" +
       "╚════════════════════╝\n\n" +
-      `💰 You earned: ₱${reward.toLocaleString()}\n` +
-      "🪓 Pickaxe used: 1\n" +
-      `🔧 Remaining Uses: ${inventory[senderID].pickaxe.hp}/300`,
-      threadID
-    );
+      `💰 You earned: ₱${earned}\n` +
+      `🪓 Pickaxe HP used: ${hpUsed}\n` +
+      `🔧 Remaining HP: ${Math.max(pickaxe.hp, 0)}\n`;
+
+    if (usedCharm) msg += "\n🍀 Lucky Charm activated!";
+
+    if (pickaxe.hp <= 0) {
+      delete inventory[senderID].pickaxe;
+      msg += "\n\n💥 Your pickaxe broke!";
+    }
+
+    fs.writeFileSync(BAL_PATH, JSON.stringify(balance, null, 2));
+    fs.writeFileSync(INV_PATH, JSON.stringify(inventory, null, 2));
+
+    api.sendMessage(msg, threadID);
   }
 };
