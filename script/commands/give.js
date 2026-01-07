@@ -6,6 +6,7 @@ const BAL_PATH = path.join(__dirname, "../../data/balance.json");
 
 const ADMIN_UID = "61562953390569";
 
+/* ================= ENSURE FILES ================= */
 if (!fs.existsSync(USERS_PATH)) fs.writeFileSync(USERS_PATH, "{}");
 if (!fs.existsSync(BAL_PATH)) fs.writeFileSync(BAL_PATH, "{}");
 
@@ -26,26 +27,21 @@ module.exports = {
       return api.sendMessage("⛔ You are not allowed to use this command.", threadID);
     }
 
-    /* 🎯 GET TARGET */
+    /* ================= TARGET ================= */
     let targetID;
-    let amount;
-
-    if (Object.keys(mentions || {}).length > 0) {
+    if (mentions && Object.keys(mentions).length) {
       targetID = Object.keys(mentions)[0];
-      amount = parseInt(args[1]);
     } else {
       targetID = args[0];
-      amount = parseInt(args[1]);
     }
+
+    const amount = parseInt(args[1]);
 
     if (!targetID || isNaN(amount) || amount <= 0) {
       return api.sendMessage(
-        "╔════════════════════╗\n" +
-        "💸 GIVE MONEY\n" +
-        "╚════════════════════╝\n\n" +
-        "Usage:\n" +
-        "➤ give @user 1000\n" +
-        "➤ give uid 1000",
+        "💸 GIVE MONEY\n\nUsage:\n" +
+        "give @user 1000\n" +
+        "give uid 1000",
         threadID
       );
     }
@@ -53,17 +49,16 @@ module.exports = {
     const users = JSON.parse(fs.readFileSync(USERS_PATH, "utf8"));
     const balance = JSON.parse(fs.readFileSync(BAL_PATH, "utf8"));
 
-    /* 📝 REGISTER CHECK */
+    /* ================= REGISTER CHECK ================= */
     if (!users[targetID]) {
       return api.sendMessage("❌ That user is not registered.", threadID);
     }
 
-    /* 💰 GIVE MONEY (SAFE) */
+    /* ================= GIVE MONEY ================= */
     balance[targetID] = (balance[targetID] || 0) + amount;
-
     fs.writeFileSync(BAL_PATH, JSON.stringify(balance, null, 2));
 
-    /* ✅ CONFIRM TO ADMIN */
+    /* ================= CONFIRM ================= */
     api.sendMessage(
       "╔════════════════════╗\n" +
       "💸 MONEY SENT\n" +
@@ -75,7 +70,6 @@ module.exports = {
       threadID
     );
 
-    /* 🎉 NOTIFY RECEIVER */
     api.sendMessage(
       "╔════════════════════╗\n" +
       "🎉 YOU RECEIVED MONEY\n" +
