@@ -2,47 +2,35 @@ const fs = require("fs");
 const path = require("path");
 
 const USERS_PATH = path.join(__dirname, "../../data/users.json");
-const BAL_PATH = path.join(__dirname, "../../data/balance.json");
 const INV_PATH = path.join(__dirname, "../../data/inventory.json");
+const BAL_PATH = path.join(__dirname, "../../data/balance.json");
 
-/* ================= ENSURE FILES ================= */
 if (!fs.existsSync(USERS_PATH)) fs.writeFileSync(USERS_PATH, "{}");
-if (!fs.existsSync(BAL_PATH)) fs.writeFileSync(BAL_PATH, "{}");
 if (!fs.existsSync(INV_PATH)) fs.writeFileSync(INV_PATH, "{}");
+if (!fs.existsSync(BAL_PATH)) fs.writeFileSync(BAL_PATH, "{}");
 
-/* ================= SHOP ITEMS ================= */
 const SHOP_ITEMS = {
+  lucky_charm: {
+    name: "🍀 Lucky Charm",
+    price: 500,
+    type: "stack"
+  },
   pickaxe: {
     name: "⛏️ Pickaxe",
     price: 3000,
-    description: "Required for mining (300 durability)",
-    stack: false,
-    durability: 300
-  },
-  lucky_charm: {
-    name: "🍀 Lucky Charm",
-    price: 500, // ✅ LOWERED PRICE
-    description: "Increases slot win chance (consumed on use)",
-    stack: true
+    type: "durability",
+    hp: 300
   },
   lotto_ticket: {
     name: "🎟️ Lotto Ticket",
     price: 2000,
-    description: "Used to join lotto",
-    stack: true
-  },
-  change_name: {
-    name: "📝 Change Name Pass",
-    price: 10000,
-    description: "Allows changing registered name",
-    stack: true
+    type: "stack"
   }
 };
 
 module.exports = {
   config: {
     name: "shop",
-    aliases: [],
     cooldown: 3,
     hasPrefix: false
   },
@@ -51,101 +39,57 @@ module.exports = {
     const { senderID, threadID } = event;
 
     const users = JSON.parse(fs.readFileSync(USERS_PATH));
-    const balance = JSON.parse(fs.readFileSync(BAL_PATH));
     const inventory = JSON.parse(fs.readFileSync(INV_PATH));
+    const balance = JSON.parse(fs.readFileSync(BAL_PATH));
 
-    /* ================= REGISTER CHECK ================= */
     if (!users[senderID]) {
-      return api.sendMessage(
-        "📝 You must register first.\nUse: register <name>",
-        threadID
-      );
+      return api.sendMessage("📝 Register first using: register", threadID);
     }
 
-    balance[senderID] = Number(balance[senderID]) || 0;
     inventory[senderID] ??= {};
+    balance[senderID] = Number(balance[senderID]) || 0;
 
-    /* ================= SHOW SHOP ================= */
+    /* VIEW SHOP */
     if (!args[0]) {
-      let msg =
-        "╔════════════════════╗\n" +
-        "🛒 MACKY SHOP\n" +
-        "╚════════════════════╝\n\n";
-
+      let msg = "🛒 MACKY SHOP\n\n";
       for (const id in SHOP_ITEMS) {
-        const it = SHOP_ITEMS[id];
-        msg +=
-          `${it.name}\n` +
-          `💰 Price: ₱${it.price.toLocaleString()}\n` +
-          `📄 ${it.description}\n\n`;
+        msg += `${SHOP_ITEMS[id].name}\n💰 ₱${SHOP_ITEMS[id].price}\n\n`;
       }
-
-      msg +=
-        "━━━━━━━━━━━━━━━━━━\n" +
-        "📌 Buy items using:\n" +
-        "shop buy <item> <amount>\n\n" +
-        "Example:\n" +
-        "shop buy lucky_charm 5";
-
+      msg += "Use:\nshop buy <item> <amount>";
       return api.sendMessage(msg, threadID);
     }
 
-    /* ================= BUY ITEM ================= */
+    /* BUY */
     if (args[0] === "buy") {
-      const itemId = args[1]?.toLowerCase();
-      const amount = Math.max(parseInt(args[2]) || 1, 1);
-
-      if (!SHOP_ITEMS[itemId]) {
-        return api.sendMessage("❌ Item not found.", threadID);
-      }
-
+      const itemId = args[1];
+      const amount = Math.max(1, parseInt(args[2]) || 1);
       const item = SHOP_ITEMS[itemId];
-      const totalCost = item.price * amount;
 
-      if (balance[senderID] < totalCost) {
-        return api.sendMessage(
-          "❌ Not enough balance.\n\n" +
-          `💰 Balance: ₱${balance[senderID].toLocaleString()}\n` +
-          `💸 Needed: ₱${totalCost.toLocaleString()}`,
-          threadID
-        );
+      if (!item) return api.sendMessage("❌ Invalid item.", threadID);
+
+      const cost = item.price * amount;
+      if (balance[senderID] < cost) {
+        return api.sendMessage("❌ Not enough balance.", threadID);
       }
 
-      /* ================= HANDLE PICKAXE ================= */
-      if (!item.stack) {
-        if (inventory[senderID][itemId]) {
-          return api.sendMessage(
-            "⚠️ You already own a pickaxe.\nUse it before buying another.",
-            threadID
-          );
-        }
+      balance[senderID] -= cost;
 
-        inventory[senderID][itemId] = {
-          durability: item.durability
-        };
-      } else {
+      if (item.type === "stack") {
         inventory[senderID][itemId] =
-          (inventory[senderID][itemId] || 0) + amount;
+          Number(inventory[senderID][itemId]) + amount || amount;
       }
 
-      balance[senderID] -= totalCost;
+      if (item.type === "durability") {
+        inventory[senderID][itemId] ??= { hp: item.hp };
+      }
 
       fs.writeFileSync(BAL_PATH, JSON.stringify(balance, null, 2));
       fs.writeFileSync(INV_PATH, JSON.stringify(inventory, null, 2));
 
       return api.sendMessage(
-        "✅ PURCHASE SUCCESSFUL\n\n" +
-        `🛍️ Item: ${item.name}\n` +
-        `📦 Amount: ${amount}\n` +
-        `💰 Cost: ₱${totalCost.toLocaleString()}\n\n` +
-        "🎒 Added to your inventory!",
+        `✅ Bought ${item.name}\n💰 Cost: ₱${cost}`,
         threadID
       );
     }
-
-    api.sendMessage(
-      "❌ Invalid command.\nUse:\nshop\nshop buy <item> <amount>",
-      threadID
-    );
   }
 };
